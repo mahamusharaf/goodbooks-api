@@ -1,9 +1,17 @@
-from fastapi import FastAPI, Query, HTTPException, Body
+import os
+
+from fastapi import FastAPI, Query, HTTPException, Body,Header
+from pydantic import BaseModel, Field
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 from bson import ObjectId
 
 app = FastAPI(title="GoodBooks API")
+API_KEY = os.getenv("API_KEY", "secret123")
+class Rating(BaseModel):
+    user_id: int
+    book_id: int
+    rating: int = Field(..., ge=1, le=5)
 
 client = MongoClient("mongodb://localhost:27017")
 db = client.goodbooks
@@ -165,24 +173,15 @@ def book_ratings_summary(book_id: int):
         "count": res["count"],
         "histogram": histogram
     }
+
 @app.post("/ratings")
-def add_rating(payload: dict = Body(...)):
-    user_id = payload.get("user_id")
-    book_id = payload.get("book_id")
-    rating = payload.get("rating")
+def add_rating(rating: Rating, x_api_key: str = Header(...)):
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid API key")
 
-    if not all([user_id, book_id, rating]):
-        raise HTTPException(status_code=400, detail="user_id, book_id, rating are required")
-
-    if not (1 <= rating <= 5):
-        raise HTTPException(status_code=400, detail="rating must be 1-5")
-
-    try:
-        db.ratings.update_one(
-            {"user_id": user_id, "book_id": book_id},
-            {"$set": {"rating": rating}},
-            upsert=True
-        )
-        return {"message": "Rating added/updated successfully"}
-    except DuplicateKeyError:
-        raise HTTPException(status_code=409, detail="Rating already exists")
+    db.ratings.update_one(
+        {"user_id": rating.user_id, "book_id": rating.book_id},
+        {"$set": rating.dict()},
+        upsert=True
+    )
+    return {"message": "Rating added/updated successfully"}
